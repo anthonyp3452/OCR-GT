@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:cross_file/cross_file.dart';
+import 'package:open_filex/open_filex.dart';
 import '../services/excel_service.dart';
 
 /// Pantalla para ver todos los registros guardados
@@ -19,6 +20,8 @@ class _RecordsScreenState extends State<RecordsScreen> {
   String? _filePath;
   bool _fileExists = false;
   bool _isCreatingDoc = false;
+  bool _isDeleting = false;
+  int? _deletingIndex;
 
   @override
   void initState() {
@@ -105,6 +108,31 @@ class _RecordsScreenState extends State<RecordsScreen> {
     }
   }
 
+  /// Abre el archivo Excel con una app externa (Google Sheets, Excel, etc.)
+  Future<void> _openDocument() async {
+    if (_filePath == null) return;
+    try {
+      final result = await OpenFilex.open(_filePath!);
+      if (result.type != ResultType.done && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('No se pudo abrir el archivo: ${result.message}'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error al abrir el archivo: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
+  }
+
   /// Copia la ruta del archivo al portapapeles
   void _copyFilePath() {
     if (_filePath != null) {
@@ -118,6 +146,78 @@ class _RecordsScreenState extends State<RecordsScreen> {
     }
   }
 
+  /// Confirma con el usuario y elimina un registro por índice.
+  Future<void> _confirmAndDeleteRecord(int index) async {
+    if (_isDeleting) return;
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: const Text('Eliminar registro'),
+          content: const Text(
+            '¿Está seguro de borrar este registro? Esta acción no se puede deshacer.',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(false),
+              child: const Text('Cancelar'),
+            ),
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(true),
+              child: const Text('Eliminar'),
+            ),
+          ],
+        );
+      },
+    );
+
+    if (confirmed != true) return;
+
+    setState(() {
+      _isDeleting = true;
+      _deletingIndex = index;
+    });
+
+    try {
+      final success = await _excelService.deleteRecordByIndex(index);
+      if (!mounted) return;
+
+      if (success) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Registro eliminado correctamente'),
+            backgroundColor: Colors.green,
+          ),
+        );
+        await _loadRecords();
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('No se pudo eliminar el registro'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error al eliminar registro: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isDeleting = false;
+          _deletingIndex = null;
+        });
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -127,11 +227,20 @@ class _RecordsScreenState extends State<RecordsScreen> {
         actions: [
           if (_fileExists)
             IconButton(
+              iconSize: 28,
+              icon: const Icon(Icons.visibility),
+              onPressed: _openDocument,
+              tooltip: 'Ver documento',
+            ),
+          if (_fileExists)
+            IconButton(
+              iconSize: 28,
               icon: const Icon(Icons.share),
               onPressed: _shareDocument,
               tooltip: 'Compartir documento',
             ),
           IconButton(
+            iconSize: 28,
             icon: const Icon(Icons.refresh),
             onPressed: _loadRecords,
             tooltip: 'Actualizar',
@@ -274,6 +383,23 @@ class _RecordsScreenState extends State<RecordsScreen> {
                                           ),
                                         ),
                                       ),
+                                      const SizedBox(width: 8),
+                                      _isDeleting && _deletingIndex == index
+                                          ? const SizedBox(
+                                              width: 20,
+                                              height: 20,
+                                              child: CircularProgressIndicator(strokeWidth: 2),
+                                            )
+                                          : IconButton(
+                                              icon: const Icon(
+                                                Icons.delete_outline,
+                                                color: Colors.redAccent,
+                                              ),
+                                              tooltip: 'Eliminar registro',
+                                              onPressed: _isDeleting
+                                                  ? null
+                                                  : () => _confirmAndDeleteRecord(index),
+                                            ),
                                     ],
                                   ),
                                   const SizedBox(height: 12),

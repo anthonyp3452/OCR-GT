@@ -3,7 +3,11 @@ class DPIParser {
 
   static final List<String> _bloqueados = [
     'APELLIDOS',
+    'I GVEN NAMES',
+    'I GIVEN NAMES',
     'NOMBRES',
+    'I SURNAME',
+    'SURNAME',
     'CÓDIGO ÚNICO DE IDENTIFICACIÓN',
     'CODIGO UNICO DE IDENTIFICACION',
     'CÓDIGO ÚNICO DE IDENTIFICACIÓN CUI',

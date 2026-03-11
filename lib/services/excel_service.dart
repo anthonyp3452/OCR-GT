@@ -7,26 +7,21 @@ import 'package:path/path.dart' as path;
 class ExcelService {
   static const String fileName = 'registro_tramites.xlsx';
   
-  /// Obtiene la ruta del directorio de documentos de la aplicación
   Future<String> _getDocumentsDirectory() async {
     final directory = await getApplicationDocumentsDirectory();
     return directory.path;
   }
 
-  /// Obtiene la ruta completa del archivo Excel
   Future<String> _getExcelFilePath() async {
     final dir = await _getDocumentsDirectory();
     return path.join(dir, fileName);
   }
 
-  /// Verifica si el archivo Excel existe
   Future<bool> fileExists() async {
     final filePath = await _getExcelFilePath();
     return File(filePath).existsSync();
   }
 
-  /// Crea un nuevo archivo Excel con los encabezados.
-  /// Puede llamarse manualmente desde el botón "Crear documento".
   Future<bool> createDocument() async {
     try {
       await _createNewExcel();
@@ -37,23 +32,34 @@ class ExcelService {
     }
   }
 
-  /// Crea un nuevo archivo Excel con los encabezados (método interno)
+  /// Crea un nuevo archivo Excel con encabezados en NEGRITA + columna No.
   Future<void> _createNewExcel() async {
     final filePath = await _getExcelFilePath();
     
     var excel = Excel.createExcel();
-    excel.delete('Sheet1'); // Eliminar hoja por defecto
+    excel.delete('Sheet1');
     Sheet sheetObject = excel['Registro Trámites'];
-    
-    // Agregar encabezados
-    sheetObject.appendRow([
-      'Fecha',
-      'Nombre',
-      'DPI',
-      'Motivo'
-    ]);
-    
-    // Guardar archivo
+
+    final headers = [
+      'No.',
+      '\t Fecha',
+      '\t Nombre\n',
+      '\t DPI\n',
+      '\t Motivo\n'
+    ];
+
+    sheetObject.appendRow(headers);
+
+    // Estilo en negrita para encabezados
+    var headerStyle = CellStyle(bold: true);
+
+    for (int i = 0; i < headers.length; i++) {
+      final cell = sheetObject.cell(
+        CellIndex.indexByColumnRow(columnIndex: i, rowIndex: 0),
+      );
+      cell.cellStyle = headerStyle;
+    }
+
     List<int>? fileBytes = excel.save();
     if (fileBytes != null) {
       File(filePath)
@@ -62,12 +68,85 @@ class ExcelService {
     }
   }
 
-  /// Agrega una nueva fila al archivo Excel existente
-  /// 
-  /// [date] - Fecha del registro
-  /// [name] - Nombre completo de la persona
-  /// [dpi] - Número de DPI
-  /// [reason] - Motivo del trámite
+  /// Elimina un registro por índice (basado en la posición mostrada en la app)
+  /// y reenumera la columna "No." para mantener la numeración correlativa.
+  ///
+  /// [index] es 0‑based respecto a la lista de registros que devuelve
+  /// `readAllRecords` (es decir, salta la fila de encabezados).
+  Future<bool> deleteRecordByIndex(int index) async {
+    try {
+      if (index < 0) return false;
+
+      if (!await fileExists()) {
+        print('No se puede eliminar: el archivo Excel no existe');
+        return false;
+      }
+
+      // Leer todos los registros como los ve la app
+      final allRecords = await readAllRecords();
+
+      if (index >= allRecords.length) {
+        print('No se puede eliminar: índice fuera de rango');
+        return false;
+      }
+
+      // Eliminar el registro correspondiente
+      allRecords.removeAt(index);
+
+      final filePath = await _getExcelFilePath();
+
+      // Crear un nuevo libro Excel y reescribir encabezados + filas
+      var excel = Excel.createExcel();
+      excel.delete('Sheet1');
+      Sheet sheetObject = excel['Registro Trámites'];
+
+      final headers = [
+        'No.',
+        '\t Fecha',
+        '\t Nombre\n',
+        '\t DPI\n',
+        '\t Motivo\n'
+      ];
+
+      sheetObject.appendRow(headers);
+
+      // Estilo en negrita para encabezados
+      var headerStyle = CellStyle(bold: true);
+      for (int i = 0; i < headers.length; i++) {
+        final cell = sheetObject.cell(
+          CellIndex.indexByColumnRow(columnIndex: i, rowIndex: 0),
+        );
+        cell.cellStyle = headerStyle;
+      }
+
+      // Reescribir los registros restantes reenumerando la columna No.
+      for (int i = 0; i < allRecords.length; i++) {
+        final record = allRecords[i];
+        sheetObject.appendRow([
+          i + 1, // nueva numeración
+          record['date'] ?? '',
+          record['name'] ?? '',
+          record['dpi'] ?? '',
+          record['reason'] ?? '',
+        ]);
+      }
+
+      final List<int>? fileBytes = excel.save();
+      if (fileBytes != null) {
+        File(filePath).writeAsBytesSync(fileBytes);
+        return true;
+      }
+
+      return false;
+    } catch (e) {
+      print('Error al eliminar registro: $e');
+      return false;
+    }
+  }
+
+  /// Agrega una nueva fila:
+  /// ✔ Con contador automático (No.)
+  /// ✔ Evitando duplicados (Fecha + DPI)
   Future<bool> addRecord({
     required String date,
     required String name,
@@ -77,28 +156,43 @@ class ExcelService {
     try {
       final filePath = await _getExcelFilePath();
       
-      // Si el archivo no existe, crearlo
       if (!await fileExists()) {
         await _createNewExcel();
       }
 
-      // Leer archivo existente
       var bytes = File(filePath).readAsBytesSync();
       var excel = Excel.decodeBytes(bytes);
-      
-      // Obtener la hoja de trabajo
       Sheet sheetObject = excel['Registro Trámites'];
-      
-      // Agregar nueva fila
-      sheetObject.appendRow([date, name, dpi, reason]);
-      
-      // Guardar cambios
+
+      // 🔍 Verificar duplicados (Fecha + DPI)
+      for (var row in sheetObject.rows.skip(1)) {
+        final existingDate = row[1]?.value?.toString() ?? '';
+        final existingDpi  = row[3]?.value?.toString() ?? '';
+
+        if (existingDate == date && existingDpi == dpi) {
+          print('⚠️ Registro duplicado detectado');
+          return false;
+        }
+      }
+
+      // 📊 Contador automático
+      final nextNumber = sheetObject.rows.length; // ya incluye encabezado
+
+      // Agregar fila
+      sheetObject.appendRow([
+        nextNumber,
+        date,
+        name,
+        dpi,
+        reason,
+      ]);
+
       List<int>? fileBytes = excel.save();
       if (fileBytes != null) {
         File(filePath).writeAsBytesSync(fileBytes);
         return true;
       }
-      
+
       return false;
     } catch (e) {
       print('Error al agregar registro: $e');
@@ -106,14 +200,11 @@ class ExcelService {
     }
   }
 
-  /// Obtiene la ruta del archivo Excel para mostrar al usuario
   Future<String> getFilePath() async {
     return await _getExcelFilePath();
   }
 
   /// Lee todos los registros del archivo Excel
-  /// 
-  /// Retorna una lista de mapas con los datos
   Future<List<Map<String, String>>> readAllRecords() async {
     try {
       if (!await fileExists()) {
@@ -123,23 +214,23 @@ class ExcelService {
       final filePath = await _getExcelFilePath();
       var bytes = File(filePath).readAsBytesSync();
       var excel = Excel.decodeBytes(bytes);
-      
       Sheet sheetObject = excel['Registro Trámites'];
-      
+
       List<Map<String, String>> records = [];
-      
-      // Leer desde la fila 1 (saltar encabezados en fila 0)
+
+      // Saltar encabezados (fila 0)
       for (var row in sheetObject.rows.skip(1)) {
-        if (row.length >= 4) {
+        if (row.length >= 5) {
           records.add({
-            'date': row[0]?.value?.toString() ?? '',
-            'name': row[1]?.value?.toString() ?? '',
-            'dpi': row[2]?.value?.toString() ?? '',
-            'reason': row[3]?.value?.toString() ?? '',
+            'no': row[0]?.value?.toString() ?? '',
+            'date': row[1]?.value?.toString() ?? '',
+            'name': row[2]?.value?.toString() ?? '',
+            'dpi': row[3]?.value?.toString() ?? '',
+            'reason': row[4]?.value?.toString() ?? '',
           });
         }
       }
-      
+
       return records;
     } catch (e) {
       print('Error al leer registros: $e');

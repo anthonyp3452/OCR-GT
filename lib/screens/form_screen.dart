@@ -8,14 +8,20 @@ import '../services/excel_service.dart';
 /// ============================================================================
 const List<String> _motivoTramiteOpciones = [
   'JUBILACION',
+  'CARNET DE AFILIACIÓN',
   'CONSULTA DE JUBILACION',
   'ACTA DE SUPERVIVENCIA',
   'INSCRIPCION',
-  'ACTTUALIZACION',
-  'CONSULTA SUBSUDIO EMA',
-  'CUOTA MURTUORIA',
+  'ACTUALIZACIÓN DE DATOS',
+  'CONSULTA PAGO DE SUSPENSION',
+  'CUOTA MURTUORIA IVS',
+  'CUOTA MURTUORIA AFILIADOS',
   'CONTRIBUCION VOLUNTARIA',
+  'MEDICINA LEGAL',
+  'ACTUALIZACION JUBILADO',
 ];
+
+const String _motivoOtroValue = '__OTRO__';
 
 class FormScreen extends StatefulWidget {
   final String initialName;
@@ -39,9 +45,9 @@ class _FormScreenState extends State<FormScreen> {
   final _formKey = GlobalKey<FormState>();
   final _nameController = TextEditingController();
   final _dpiController = TextEditingController();
-  final _reasonController = TextEditingController(); // Solo para registro manual
+  final _reasonController = TextEditingController(); // Para "Otro"
   final ExcelService _excelService = ExcelService();
-  String? _selectedMotivo; // Solo para formulario desde escáner
+  String? _selectedMotivo;
   bool _isSaving = false;
 
   @override
@@ -49,6 +55,11 @@ class _FormScreenState extends State<FormScreen> {
     super.initState();
     _nameController.text = widget.initialName;
     _dpiController.text = widget.initialDPI;
+    // Por defecto, en registro manual se usa "Otro" para permitir escribir libremente,
+    // pero el usuario puede cambiarlo a un motivo de la lista si lo desea.
+    if (widget.isManualEntry) {
+      _selectedMotivo = _motivoOtroValue;
+    }
   }
 
   @override
@@ -60,10 +71,11 @@ class _FormScreenState extends State<FormScreen> {
   }
 
   String _getReasonValue() {
-    if (widget.isManualEntry) {
+    if (_selectedMotivo == _motivoOtroValue) {
       return _reasonController.text.trim();
     }
-    return _selectedMotivo ?? '';
+    if (_selectedMotivo == null) return '';
+    return _selectedMotivo!;
   }
 
   /// Guarda el registro en el archivo Excel
@@ -197,48 +209,64 @@ class _FormScreenState extends State<FormScreen> {
               validator: _validateDPI,
             ),
             const SizedBox(height: 24),
-            if (widget.isManualEntry)
+            DropdownButtonFormField<String>(
+              value: _selectedMotivo,
+              isExpanded: true,
+              decoration: const InputDecoration(
+                labelText: 'Motivo del trámite *',
+                border: OutlineInputBorder(),
+                prefixIcon: Icon(Icons.description),
+              ),
+              hint: const Text('Seleccione el motivo'),
+              items: [
+                ..._motivoTramiteOpciones.map(
+                  (opcion) => DropdownMenuItem<String>(
+                    value: opcion,
+                    child: Text(opcion, overflow: TextOverflow.ellipsis),
+                  ),
+                ),
+                const DropdownMenuItem<String>(
+                  value: _motivoOtroValue,
+                  child: Text('OTRO (Escribir manualmente)'),
+                ),
+              ],
+              onChanged: (value) {
+                setState(() {
+                  _selectedMotivo = value;
+                  if (_selectedMotivo != _motivoOtroValue) {
+                    _reasonController.clear();
+                  }
+                });
+              },
+              validator: (value) {
+                if (value == null || value.isEmpty) {
+                  return 'Seleccione el motivo del trámite';
+                }
+                return null;
+              },
+            ),
+            if (_selectedMotivo == _motivoOtroValue) ...[
+              const SizedBox(height: 16),
               TextFormField(
                 controller: _reasonController,
                 decoration: const InputDecoration(
-                  labelText: 'Motivo del trámite *',
-                  hintText: 'Ingrese el motivo de la visita',
+                  labelText: 'Especifique el motivo *',
+                  hintText: 'Escriba el motivo del trámite',
                   border: OutlineInputBorder(),
-                  prefixIcon: Icon(Icons.description),
+                  prefixIcon: Icon(Icons.edit_note),
                 ),
                 textCapitalization: TextCapitalization.sentences,
                 maxLines: 3,
                 validator: (value) {
-                  if (value == null || value.trim().isEmpty) {
-                    return 'El motivo es requerido';
-                  }
-                  return null;
-                },
-              )
-            else
-              DropdownButtonFormField<String>(
-                value: _selectedMotivo,
-                isExpanded: true,
-                decoration: const InputDecoration(
-                  labelText: 'Motivo del trámite *',
-                  border: OutlineInputBorder(),
-                  prefixIcon: Icon(Icons.description),
-                ),
-                hint: const Text('Seleccione el motivo'),
-                items: _motivoTramiteOpciones
-                    .map((opcion) => DropdownMenuItem<String>(
-                          value: opcion,
-                          child: Text(opcion, overflow: TextOverflow.ellipsis),
-                        ))
-                    .toList(),
-                onChanged: (value) => setState(() => _selectedMotivo = value),
-                validator: (value) {
-                  if (value == null || value.isEmpty) {
-                    return 'Seleccione el motivo del trámite';
+                  if (_selectedMotivo == _motivoOtroValue) {
+                    if (value == null || value.trim().isEmpty) {
+                      return 'El motivo es requerido';
+                    }
                   }
                   return null;
                 },
               ),
+            ],
             const SizedBox(height: 32),
             ElevatedButton(
               onPressed: _isSaving ? null : _saveRecord,

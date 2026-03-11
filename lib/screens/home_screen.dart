@@ -30,7 +30,7 @@ class _HomeScreenState extends State<HomeScreen> {
     super.dispose();
   }
 
-  /// Escanea el DPI usando la cámara y OCR
+
   Future<void> _scanDPI() async {
     setState(() {
       _isScanning = true;
